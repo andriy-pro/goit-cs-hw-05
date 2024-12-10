@@ -1,102 +1,128 @@
-import string
-from collections import defaultdict
+import logging
+import os
+from argparse import ArgumentParser
+from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
-from multiprocessing import Pool
+from datetime import datetime
+from typing import Dict, List
 
 import matplotlib.pyplot as plt
 import requests
+from colorama import Fore, init
+from requests.exceptions import RequestException
 
-from config import WORD_ANALYSIS
+from config import SCRIPT_DIR  # Додано SCRIPT_DIR
+from config import (
+    DEFAULT_URL,
+    LOG_DIR,
+    LOG_FORMAT,
+    LOG_LEVEL,
+    MAX_WORDS_TO_DISPLAY,
+    REQUEST_TIMEOUT,
+)
+
+# Ініціалізація кольорів
+init(autoreset=True)
+
+# Налаштування логування
+os.makedirs(LOG_DIR, exist_ok=True)
+log_filename = os.path.join(
+    LOG_DIR, f"word_frequency_analysis_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
+)
+logging.basicConfig(
+    filename=str(log_filename),
+    level=LOG_LEVEL,
+    format=LOG_FORMAT,
+)
 
 
-# Завантаження тексту з URL
-def fetch_text(url):
+# Функція для отримання тексту з URL
+def fetch_text(url: str) -> str:
+    """Fetch text content from given URL with proper error handling."""
     try:
-        response = requests.get(url)
+        response = requests.get(url, timeout=REQUEST_TIMEOUT)
         response.raise_for_status()
         return response.text
-    except requests.RequestException as e:
-        print(f"Error fetching text: {e}")
-        return None
+    except RequestException as e:
+        logging.error(f"Failed to fetch text: {e}")
+        raise
 
 
-# Обробка тексту
-def preprocess_text(text):
+def preprocess_text(text: str) -> List[str]:
+    """Preprocess text by removing punctuation and converting to lowercase."""
+    import re
+
     text = text.lower()
-    text = text.translate(str.maketrans("", "", string.punctuation))
+    text = re.sub(r"[^\w\s]", "", text)
     return text.split()
 
 
-# Map функція
-def map_words(words):
-    # Додамо обробку помилок
-    try:
-        word_counts = defaultdict(int)
-        for word in words:
-            if word.strip():  # Перевіряємо, чи слово не пусте
-                word_counts[word] += 1
-        return word_counts
-    except Exception as e:
-        print(f"Помилка в map_words: {e}")
-        return defaultdict(int)
+# Функція для аналізу частоти слів
+def analyze_frequency(text: str) -> Counter:
+    """Analyze word frequency in preprocessed text."""
+    words = preprocess_text(text)
+    return Counter(words)
 
 
-# Reduce функція
-def reduce_counts(counts_list):
-    total_counts = defaultdict(int)
-    for counts in counts_list:
-        for word, count in counts.items():
-            total_counts[word] += count
-    return total_counts
-
-
-# Візуалізація
-def visualize_top_words(word_counts, top_n=10):
-    top_words = sorted(word_counts.items(), key=lambda x: x[1], reverse=True)[:top_n]
+# Функція для візуалізації результатів
+def visualize_top_words(word_counts, top_n=MAX_WORDS_TO_DISPLAY):
+    top_words = word_counts.most_common(top_n)
     words, counts = zip(*top_words)
 
-    plt.figure(figsize=(10, 6))
-    plt.bar(words, counts, color="skyblue")
-    plt.title(f"Top {top_n} Words by Frequency")
-    plt.xlabel("Words")
-    plt.ylabel("Frequency")
+    bar_image_path = SCRIPT_DIR / "word_frequency_bar.png"
+    pie_image_path = SCRIPT_DIR / "word_frequency_pie.png"
+
+    plt.bar(words, counts, color="blue")
+    plt.title("Топ слів за частотою")
+    plt.xlabel("Слова")
+    plt.ylabel("Частота")
     plt.xticks(rotation=45)
+    plt.tight_layout()
+    plt.savefig(bar_image_path)
+    plt.show()
+
+    plt.pie(counts, labels=words, autopct="%1.1f%%")
+    plt.title("Розподіл слів за частотою")
+    plt.savefig(pie_image_path)
     plt.show()
 
 
-# Головна функція
-def main(
-    url=WORD_ANALYSIS["DEFAULT_URL"],
-    top_n=WORD_ANALYSIS["DEFAULT_TOP_N"],
-    use_multiprocessing=False,
-):
-    # Використовуємо налаштування з конфігу
-    if use_multiprocessing:
-        chunk_size = WORD_ANALYSIS["CHUNK_SIZE"]
-        num_chunks = WORD_ANALYSIS["NUM_PROCESSES"]
+# Основна функція
+def main(url, top_n):
+    logging.info(f"Отримуємо текст з {url}")
     text = fetch_text(url)
-    if not text:
-        return
 
-    words = preprocess_text(text)
+    logging.info("Аналізуємо частоту слів...")
+    with ThreadPoolExecutor() as executor:
+        word_counts = executor.submit(analyze_frequency, text).result()
 
-    if use_multiprocessing:
-        num_chunks = 4
-        chunk_size = len(words) // num_chunks
-        chunks = [words[i : i + chunk_size] for i in range(0, len(words), chunk_size)]
-
-        with Pool(num_chunks) as pool:
-            map_results = pool.map(map_words, chunks)
-
-        word_counts = reduce_counts(map_results)
-    else:
-        with ThreadPoolExecutor() as executor:
-            mapped_values = list(executor.map(map_words, [words]))
-            word_counts = reduce_counts(mapped_values)
-
+    logging.info("Візуалізація результатів...")
     visualize_top_words(word_counts, top_n)
+    print(
+        f"{Fore.GREEN}Графіки збережено як 'word_frequency_bar.png' та 'word_frequency_pie.png'"
+    )
 
 
+# Парсер аргументів командного рядка
 if __name__ == "__main__":
-    url = "https://www.gutenberg.org/files/84/84-0.txt"
-    main(url, top_n=10, use_multiprocessing=True)
+    parser = ArgumentParser(description="Аналіз частоти слів у тексті за URL.")
+    parser.add_argument(
+        "--url",
+        type=str,
+        default=DEFAULT_URL,
+        help=f"URL-адреса тексту для аналізу (за замовчуванням {DEFAULT_URL}).",
+    )
+    parser.add_argument(
+        "--top_n",
+        type=int,
+        default=MAX_WORDS_TO_DISPLAY,
+        help=f"Кількість слів для відображення (за замовчуванням {MAX_WORDS_TO_DISPLAY}).",
+    )
+
+    args = parser.parse_args()
+
+    try:
+        main(args.url, args.top_n)
+    except Exception as e:
+        logging.error(f"Сталася помилка: {e}")
+        print(f"{Fore.RED}Помилка: {e}")
