@@ -1,125 +1,96 @@
-import logging
 import random
 import string
+from argparse import ArgumentParser
 from pathlib import Path
 
-from config import FILE_GENERATOR, INPUT_DIR, SCRIPT_DIR
-
-# Отримуємо шлях до теки скрипту
-SCRIPT_DIR = Path(__file__).parent
-
-# Шлях до папки input
-INPUT_DIR = SCRIPT_DIR / "input"
-INPUT_DIR.mkdir(parents=True, exist_ok=True)
+from config import FILE_GENERATOR, INPUT_DIR
 
 
-def create_random_text_file(file_path, size_kb):
-    """Створює текстовий файл з контролем розміру"""
-    max_size_bytes = FILE_GENERATOR["MAX_FILE_SIZE_MB"] * 1024 * 1024
-    target_size_bytes = size_kb * 1024
-
-    if target_size_bytes > max_size_bytes:
-        raise ValueError(
-            f"Розмір файлу перевищує ліміт: {size_kb}KB > {FILE_GENERATOR['MAX_FILE_SIZE_MB']}MB"
-        )
-
-    if target_size_bytes < FILE_GENERATOR["MIN_FILE_SIZE_BYTES"]:
-        raise ValueError(f"Розмір файлу занадто малий: {size_kb}KB")
-
-    try:
-        with open(file_path, "w", encoding="utf-8") as f:
-            written_bytes = 0
-            chunk_size = FILE_GENERATOR["TEXT_FILE_CHUNK_SIZE"]
-
-            while written_bytes < target_size_bytes:
-                random_text = "".join(
-                    random.choices(
-                        string.ascii_letters + string.digits + " ", k=chunk_size
-                    )
-                )
-                f.write(random_text + "\n")
-                written_bytes = f.tell()
-
-                if written_bytes > max_size_bytes:
-                    logging.warning(f"Файл {file_path} досяг максимального розміру")
-                    break
-
-    except IOError as e:
-        logging.error(f"Помилка при створенні файлу {file_path}: {e}")
-        raise
-
-
-def generate_test_files(
-    base_dir, num_files=100, extensions=None, no_extension_ratio=None
-):
+def generate_random_files(
+    base_dir: Path, num_files: int, total_files_limit: int = None
+) -> tuple[int, int]:
     """
-    Створює тестові файли з випадковими розширеннями та вмістом, деякі без розширень.
-
-    :param base_dir: Основна теки для збереження файлів.
-    :param num_files: Кількість файлів для створення.
-    :param extensions: Список можливих розширень файлів.
-    :param no_extension_ratio: Частка файлів без розширень (0.0 - 1.0).
+    Генерує випадкові файли з різними розширеннями та без розширень у заданій теці.
+    Повертає кількість створених файлів та їх загальний розмір.
     """
-    if extensions is None:
-        extensions = FILE_GENERATOR["EXTENSIONS"]
-    if no_extension_ratio is None:
-        no_extension_ratio = FILE_GENERATOR["NO_EXTENSION_RATIO"]
+    if total_files_limit is not None and num_files > total_files_limit:
+        num_files = total_files_limit
 
+    total_size = 0
+    files_created = 0
     base_dir.mkdir(parents=True, exist_ok=True)
-    num_no_ext_files = int(num_files * no_extension_ratio)
+    extensions = FILE_GENERATOR["EXTENSIONS"]
+    no_extension_ratio = FILE_GENERATOR["NO_EXTENSION_RATIO"]
 
+    num_no_ext_files = int(num_files * no_extension_ratio)
     for i in range(num_files):
         # Визначаємо, чи створювати файл без розширення
         if i < num_no_ext_files:
             ext = ""
         else:
             ext = random.choice(extensions)
-        file_name = f"file_{i + 1}"
+        # Генеруємо випадкове ім'я файлу
+        file_name = "".join(random.choices(string.ascii_letters + string.digits, k=8))
         if ext:
             file_name += f".{ext}"
         file_path = base_dir / file_name
 
-        # Створюємо файл
-        if ext in ["txt", "csv", "json", "xml"] or ext == "":
-            # Створюємо текстові файли з випадковим розміром (1-10 KB)
-            create_random_text_file(file_path, random.randint(1, 10))
-        else:
-            # Створюємо порожні файли для інших розширень
-            file_path.touch()
-
-
-def create_test_environment(base_dir):
-    """
-    Створює структуру директорій для тестування.
-
-    :param base_dir: Основна теки для тестування.
-    """
-    subfolders = ["subfolder1", "subfolder2/subsubfolder1", "subfolder3"]
-    for folder in subfolders:
-        generate_test_files(base_dir / folder, num_files=random.randint(10, 20))
-
-
-def generate_files(num_files: int):
-    """Генерує випадкові файли в теці input."""
-    for _ in range(num_files):
-        filename = (
-            "".join(random.choices(string.ascii_letters + string.digits, k=8)) + ".txt"
+        # Створюємо файл з випадковим вмістом
+        random_text = "".join(
+            random.choices(string.ascii_letters + string.digits + " ", k=1024)
         )
-        filepath = INPUT_DIR / filename
-        with open(filepath, "w") as f:
-            f.write("Test content")
+        file_path.write_text(random_text)
+        file_size = len(random_text.encode())
+        total_size += file_size
+        files_created += 1
+
+    return files_created, total_size
+
+
+def create_chaotic_structure(
+    base_dir: Path, depth: int = 3, total_files_limit: int = None
+) -> tuple[int, int]:
+    """
+    Рекурсивно створює хаотичну структуру директорій з випадковими файлами.
+    Повертає загальну кількість створених файлів та їх розмір.
+    """
+    if depth == 0 or (total_files_limit is not None and total_files_limit <= 0):
+        return 0, 0
+
+    total_files = 0
+    total_size = 0
+
+    num_files = min(random.randint(5, 15), total_files_limit or float("inf"))
+    files_created, size = generate_random_files(base_dir, num_files, total_files_limit)
+    total_files += files_created
+    total_size += size
+
+    if total_files_limit is not None:
+        total_files_limit -= files_created
+
+    for _ in range(random.randint(1, 3)):
+        if total_files_limit is not None and total_files_limit <= 0:
+            break
+        subdir_files, subdir_size = create_chaotic_structure(
+            base_dir / "".join(random.choices(string.ascii_letters, k=5)),
+            depth - 1,
+            total_files_limit,
+        )
+        total_files += subdir_files
+        total_size += subdir_size
+        if total_files_limit is not None:
+            total_files_limit -= subdir_files
+
+    return total_files, total_size
 
 
 if __name__ == "__main__":
-    # Основна теки для тестування
-    test_dir = INPUT_DIR
+    parser = ArgumentParser(description="Генерація тестових файлів")
+    parser.add_argument("--max-files", type=int, help="Максимальна кількість файлів")
+    args = parser.parse_args()
 
-    # Генеруємо файли у теці `test`
-    generate_test_files(test_dir, num_files=50)
-
-    # Додаємо підпапки
-    create_test_environment(test_dir)
-
-    generate_files(10)
-    print(f"Згенеровано файли у теці: {INPUT_DIR}")
-    print(f"Тестові файли успішно створено у теці: {test_dir.resolve()}")
+    total_files, total_size = create_chaotic_structure(
+        INPUT_DIR, total_files_limit=args.max_files
+    )
+    print(f"Створено файлів: {total_files}")
+    print(f"Загальний розмір: {total_size / 1024:.2f} KB")

@@ -4,21 +4,22 @@ from argparse import ArgumentParser
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
-from typing import Dict, List
+from typing import List
 
 import matplotlib.pyplot as plt
 import requests
 from colorama import Fore, init
 from requests.exceptions import RequestException
 
-from config import SCRIPT_DIR  # Додано SCRIPT_DIR
 from config import (
     DEFAULT_URL,
     LOG_DIR,
     LOG_FORMAT,
     LOG_LEVEL,
     MAX_WORDS_TO_DISPLAY,
+    MINIMUM_WORD_LENGTH,
     REQUEST_TIMEOUT,
+    SCRIPT_DIR,
 )
 
 # Ініціалізація кольорів
@@ -38,18 +39,18 @@ logging.basicConfig(
 
 # Функція для отримання тексту з URL
 def fetch_text(url: str) -> str:
-    """Fetch text content from given URL with proper error handling."""
+    """Отримує текстовий вміст з вказаної URL-адреси з обробкою помилок."""
     try:
         response = requests.get(url, timeout=REQUEST_TIMEOUT)
         response.raise_for_status()
         return response.text
     except RequestException as e:
-        logging.error(f"Failed to fetch text: {e}")
+        logging.error(f"Не вдалося отримати текст: {e}")
         raise
 
 
 def preprocess_text(text: str) -> List[str]:
-    """Preprocess text by removing punctuation and converting to lowercase."""
+    """Попередньо обробляє текст: перетворює в нижній регістр та вилучає пунктуацію."""
     import re
 
     text = text.lower()
@@ -59,13 +60,21 @@ def preprocess_text(text: str) -> List[str]:
 
 # Функція для аналізу частоти слів
 def analyze_frequency(text: str) -> Counter:
-    """Analyze word frequency in preprocessed text."""
+    """Аналізує частоту слів у попередньо обробленому тексті."""
     words = preprocess_text(text)
-    return Counter(words)
+    # Фільтруємо слова за мінімальною довжиною
+    filtered_words = [word for word in words if len(word) >= MINIMUM_WORD_LENGTH]
+    word_counts = Counter(filtered_words)
+    logging.info(
+        f"Проаналізовано {len(filtered_words)} слів (мін. довжина: {MINIMUM_WORD_LENGTH})"
+    )
+    logging.info(f"Топ слів: {word_counts.most_common(10)}")
+    return word_counts
 
 
 # Функція для візуалізації результатів
 def visualize_top_words(word_counts, top_n=MAX_WORDS_TO_DISPLAY):
+    """Візуалізує топ слів за частотою у вигляді графіків."""
     top_words = word_counts.most_common(top_n)
     words, counts = zip(*top_words)
 
@@ -89,6 +98,15 @@ def visualize_top_words(word_counts, top_n=MAX_WORDS_TO_DISPLAY):
 
 # Основна функція
 def main(url, top_n):
+    print(f"{Fore.CYAN}Завантаження тексту з: {Fore.YELLOW}{url}")
+    confirm = input(f"{Fore.GREEN}Бажаєте продовжити? (y/n) [Y]: ").strip().lower()
+    if confirm == "" or confirm == "y":
+        confirm = "y"
+    if confirm != "y":
+        print(f"{Fore.RED}Операцію скасовано користувачем.")
+        logging.info("Операцію скасовано користувачем.")
+        return
+
     logging.info(f"Отримуємо текст з {url}")
     text = fetch_text(url)
 
@@ -99,7 +117,7 @@ def main(url, top_n):
     logging.info("Візуалізація результатів...")
     visualize_top_words(word_counts, top_n)
     print(
-        f"{Fore.GREEN}Графіки збережено як 'word_frequency_bar.png' та 'word_frequency_pie.png'"
+        f"{Fore.GREEN}Графіки збережено як {Fore.YELLOW}'word_frequency_bar.png' {Fore.GREEN}та {Fore.YELLOW}'word_frequency_pie.png'"
     )
 
 
